@@ -1,6 +1,7 @@
 package com.netakbazman.app;
 
 import android.Manifest;
+import android.app.AlarmManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -29,8 +30,10 @@ public class CallTimerService extends Service {
     public static final String ACTION_CALL_END = "com.netakbazman.END";
     public static final String ACTION_SNOOZE = "com.netakbazman.SNOOZE";
     public static final String ACTION_KEEP = "com.netakbazman.KEEP";
+    public static final String ACTION_ALARM = "com.netakbazman.ALARM";
 
     static final String CH_ONGOING = "ongoing";
+    static final String CH_ONGOING_ECO = "ongoing_eco";
     static final String CH_WARN = "warn";
     static final String CH_DONE = "done";
     static final int ID_ONGOING = 1, ID_WARN = 2, ID_DONE = 3;
@@ -43,6 +46,7 @@ public class CallTimerService extends Service {
     private boolean active = false;
     private boolean warned = false;
     private boolean userAdjusted = false;
+    private boolean eco = false;
     private long startElapsed;
     private long deadline;          // elapsedRealtime, -1 = never
     private int plannedMinutes;
@@ -68,14 +72,22 @@ public class CallTimerService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         String a = intent != null ? intent.getAction() : null;
+        // a repeated startForegroundService() on a running timer must confirm foreground again
+        if (active && (ACTION_CALL_START.equals(a) || ACTION_ALARM.equals(a))) {
+            startForeground(ID_ONGOING, buildOngoing());
+        }
         if (ACTION_CALL_START.equals(a)) {
             handleStart(intent.getStringExtra("number"));
         } else if (ACTION_CALL_END.equals(a)) {
             finish();
         } else if (ACTION_SNOOZE.equals(a)) {
+            if (!active && Prefs.sp(this).getBoolean("t_active", false)) restore();
             if (active && deadline >= 0) snooze();
             else cancelWarn(this);
             if (!active) stopSelf();
+        } else if (ACTION_ALARM.equals(a)) {
+            if (active) onTick();
+            else restore();
         } else if (ACTION_KEEP.equals(a)) {
             cancelWarn(this);
             finish();
@@ -90,13 +102,16 @@ public class CallTimerService extends Service {
             active = true;
             warned = false;
             userAdjusted = false;
+            eco = Prefs.eco(this);
             startElapsed = SystemClock.elapsedRealtime();
             number = num;
             compute();
             // must go foreground right away
             startForeground(ID_ONGOING, buildOngoing());
             if (deadline < 0) { finish(); return; }
-            acquireWakeLock();
+            if (!eco) acquireWakeLock();
+            scheduleAlarms();
+            saveState();
             handler.removeCallbacks(tick);
             handler.post(tick);
         } else if ((number == null || number.isEmpty()) && num != null && !num.isEmpty() && !userAdjusted) {
@@ -104,6 +119,8 @@ public class CallTimerService extends Service {
             compute();
             if (deadline < 0) { finish(); return; }
             updateOngoing();
+            scheduleAlarms();
+            saveState();
             handler.removeCallbacks(tick);
             handler.post(tick);
         }
@@ -121,7 +138,8 @@ public class CallTimerService extends Service {
         photo = null;
         try {
             int size = (int) (64 * getResources().getDisplayMetrics().density);
-            if (k != null) photo = ContactUtil.avatar(this, k.photoUri, label, size);
+            if (eco) photo = null;
+            else if (k != null) photo = ContactUtil.avatar(this, k.photoUri, label, size);
             else if (r != null) photo = ContactUtil.letter(label, size);
         } catch (Exception ignored) {}
         deadline = m <= 0 ? -1 : startElapsed + m * 60000L;
@@ -137,8 +155,10 @@ public class CallTimerService extends Service {
         if (rem <= 0) { hangUp(); return; }
         if (!warned && rem <= warnMs) {
             warned = true;
+            saveState();
             postWarning(this, label, rem, false, photo);
         }
+        if (eco) return; // eco: the system alarms wake us at the right moments
         long next = Math.min(15000L, rem);
         if (!warned && rem - warnMs > 0) next = Math.min(next, rem - warnMs);
         handler.postDelayed(tick, Math.max(500L, next));
@@ -152,6 +172,8 @@ public class CallTimerService extends Service {
         warned = (deadline - now) <= Prefs.warnMinutes(this) * 60000L;
         cancelWarn(this);
         updateOngoing();
+        scheduleAlarms();
+        saveState();
         handler.removeCallbacks(tick);
         handler.post(tick);
     }
@@ -206,6 +228,8 @@ public class CallTimerService extends Service {
     private void finish() {
         active = false;
         handler.removeCallbacksAndMessages(null);
+        cancelAlarms();
+        clearState();
         cancelWarn(this);
         try { stopForeground(true); } catch (Exception ignored) {}
         releaseWakeLock();
@@ -218,6 +242,102 @@ public class CallTimerService extends Service {
         if (handler != null) handler.removeCallbacksAndMessages(null);
         releaseWakeLock();
         super.onDestroy();
+    }
+
+    // ---------- system alarms + saved state (survive the app being closed) ----------
+
+    private PendingIntent alarmPI(int code) { return alarmPI(this, code); }
+
+    static PendingIntent alarmPI(Context c, int code) {
+        Intent i = new Intent(c, AlarmReceiver.class).setAction(ACTION_ALARM + code);
+        return PendingIntent.getBroadcast(c, 100 + code, i, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+    }
+
+    /** Called when a call ends, even if the timer process is gone: drop leftover alarms and state. */
+    static void clearLeftovers(Context c) {
+        try {
+            AlarmManager am = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
+            if (am != null) { am.cancel(alarmPI(c, 1)); am.cancel(alarmPI(c, 2)); }
+        } catch (Exception ignored) {}
+        Prefs.sp(c).edit().putBoolean("t_active", false).apply();
+        cancelWarn(c);
+    }
+
+    private void scheduleAlarms() {
+        cancelAlarms();
+        if (deadline < 0) return;
+        AlarmManager am = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+        if (am == null) return;
+        long now = SystemClock.elapsedRealtime();
+        long warnMs = Prefs.warnMinutes(this) * 60000L;
+        try {
+            if (eco) {
+                // alarm-clock alarms are never delayed by power saving
+                long wall = System.currentTimeMillis() + (deadline - now);
+                am.setAlarmClock(new AlarmManager.AlarmClockInfo(wall, openApp(this)), alarmPI(1));
+            } else {
+                am.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, deadline, alarmPI(1));
+            }
+            if (!warned && deadline - warnMs > now) {
+                am.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, deadline - warnMs, alarmPI(2));
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private void cancelAlarms() {
+        AlarmManager am = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+        if (am == null) return;
+        am.cancel(alarmPI(1));
+        am.cancel(alarmPI(2));
+    }
+
+    private void saveState() {
+        long nowE = SystemClock.elapsedRealtime(), nowW = System.currentTimeMillis();
+        Prefs.sp(this).edit()
+                .putBoolean("t_active", true)
+                .putLong("t_startWall", nowW - (nowE - startElapsed))
+                .putLong("t_deadlineWall", nowW + (deadline - nowE))
+                .putString("t_number", number)
+                .putString("t_label", label)
+                .putBoolean("t_warned", warned)
+                .putBoolean("t_adjusted", userAdjusted)
+                .apply();
+    }
+
+    private void clearState() {
+        Prefs.sp(this).edit().putBoolean("t_active", false).apply();
+    }
+
+    /** The app was closed during a call and a system alarm woke it: continue where it stopped. */
+    private void restore() {
+        android.content.SharedPreferences sp = Prefs.sp(this);
+        boolean inCall = false;
+        try {
+            android.telephony.TelephonyManager tm =
+                    (android.telephony.TelephonyManager) getSystemService(Context.TELEPHONY_SERVICE);
+            inCall = tm != null && tm.getCallState() == android.telephony.TelephonyManager.CALL_STATE_OFFHOOK;
+        } catch (Exception ignored) {}
+        if (!sp.getBoolean("t_active", false) || !inCall) {
+            label = "שיחה";
+            deadline = -1;
+            startForeground(ID_ONGOING, buildOngoing());
+            finish();
+            return;
+        }
+        long nowE = SystemClock.elapsedRealtime(), nowW = System.currentTimeMillis();
+        active = true;
+        eco = Prefs.eco(this);
+        number = sp.getString("t_number", null);
+        label = sp.getString("t_label", "שיחה");
+        warned = sp.getBoolean("t_warned", false);
+        userAdjusted = sp.getBoolean("t_adjusted", false);
+        startElapsed = nowE - (nowW - sp.getLong("t_startWall", nowW));
+        deadline = nowE + (sp.getLong("t_deadlineWall", nowW) - nowW);
+        photo = null;
+        startForeground(ID_ONGOING, buildOngoing());
+        if (!eco) acquireWakeLock();
+        scheduleAlarms();
+        onTick();
     }
 
     // ---------- wake lock ----------
@@ -239,6 +359,23 @@ public class CallTimerService extends Service {
     // ---------- notifications ----------
 
     private Notification buildOngoing() {
+        if (eco) {
+            String text = "ללא ניתוק אוטומטי בשיחה זו";
+            if (deadline >= 0) {
+                long endWall = System.currentTimeMillis() + (deadline - SystemClock.elapsedRealtime());
+                text = "תתנתק בשעה " + new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date(endWall));
+            }
+            return new Notification.Builder(this, CH_ONGOING_ECO)
+                    .setSmallIcon(R.drawable.ic_notif)
+                    .setColor(COLOR)
+                    .setOngoing(true)
+                    .setOnlyAlertOnce(true)
+                    .setShowWhen(false)
+                    .setContentIntent(openApp(this))
+                    .setContentTitle("נתק בזמן · מצב חיסכון")
+                    .setContentText(text)
+                    .build();
+        }
         Notification.Builder b = new Notification.Builder(this, CH_ONGOING)
                 .setSmallIcon(R.drawable.ic_notif)
                 .setColor(COLOR)
@@ -323,6 +460,12 @@ public class CallTimerService extends Service {
         if (m.getNotificationChannel(CH_ONGOING) == null) {
             NotificationChannel ch = new NotificationChannel(CH_ONGOING, "שיחה פעילה", NotificationManager.IMPORTANCE_LOW);
             ch.setDescription("ספירה לאחור בזמן שיחה");
+            ch.setShowBadge(false);
+            m.createNotificationChannel(ch);
+        }
+        if (m.getNotificationChannel(CH_ONGOING_ECO) == null) {
+            NotificationChannel ch = new NotificationChannel(CH_ONGOING_ECO, "שיחה פעילה (מצב חיסכון)", NotificationManager.IMPORTANCE_MIN);
+            ch.setDescription("התראה מינימלית בזמן שיחה, בלי ספירה לאחור");
             ch.setShowBadge(false);
             m.createNotificationChannel(ch);
         }

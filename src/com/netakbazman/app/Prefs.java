@@ -27,6 +27,10 @@ public final class Prefs {
     public static boolean enabled(Context c) { return sp(c).getBoolean("enabled", true); }
     public static void setEnabled(Context c, boolean v) { sp(c).edit().putBoolean("enabled", v).apply(); }
 
+    /** Energy saving: no live countdown, no wake lock, no photos; system alarms drive the timer. */
+    public static boolean eco(Context c) { return sp(c).getBoolean("eco", false); }
+    public static void setEco(Context c, boolean v) { sp(c).edit().putBoolean("eco", v).apply(); }
+
     public static int defaultMinutes(Context c) { return sp(c).getInt("defMin", 120); }
     public static void setDefaultMinutes(Context c, int v) { sp(c).edit().putInt("defMin", v).apply(); }
 

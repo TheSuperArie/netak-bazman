@@ -12,7 +12,7 @@ rm -rf build && mkdir -p build/gen build/classes
 $AAPT2 compile --dir res -o build/res.zip
 $AAPT2 link -o build/base.apk -I $ANDROID_JAR --manifest AndroidManifest.xml \
     --java build/gen --min-sdk-version 26 --target-sdk-version 30 \
-    --version-code 3 --version-name 1.2 build/res.zip
+    --version-code 4 --version-name 1.3 build/res.zip
 
 javac -nowarn -Xlint:-options -encoding UTF-8 -source 8 -target 8 -bootclasspath $ANDROID_JAR \
     -d build/classes $(find build/gen src -name "*.java")

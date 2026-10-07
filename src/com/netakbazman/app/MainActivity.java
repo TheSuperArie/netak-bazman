@@ -118,7 +118,8 @@ public class MainActivity extends Activity {
         defaultCard();
         rulesCard();
         warnCard();
-        TextView f = text("עובד בלי אינטרנט · שום מידע לא יוצא מהמכשיר · גרסה 1.2", 13, MUTED, false);
+        ecoCard();
+        TextView f = text("עובד בלי אינטרנט · שום מידע לא יוצא מהמכשיר · גרסה 1.3", 13, MUTED, false);
         f.setGravity(Gravity.CENTER);
         f.setPadding(0, dp(18), 0, 0);
         root.addView(f, new LinearLayout.LayoutParams(-1, -2));
@@ -788,6 +789,42 @@ public class MainActivity extends Activity {
             sh.bottom.addView(del, dl);
         }
         sh.dialog.show();
+    }
+
+    // ---- energy saving
+
+    private void ecoCard() {
+        LinearLayout card = card();
+        LinearLayout row = hrow();
+        LinearLayout col = vcol();
+        final boolean on = Prefs.eco(this);
+        TextView t = title("מצב חיסכון בסוללה");
+        col.addView(t);
+        col.addView(text(on ? "פעיל" : "כבוי", 14, on ? OK : MUTED, false));
+        row.addView(col, new LinearLayout.LayoutParams(0, -2, 1));
+        Switch sw = new Switch(this);
+        sw.setChecked(on);
+        sw.setContentDescription("מצב חיסכון בסוללה");
+        int[][] st = {{android.R.attr.state_checked}, {}};
+        sw.setThumbTintList(new ColorStateList(st, new int[]{ACCENT, 0xFF8A8172}));
+        sw.setTrackTintList(new ColorStateList(st, new int[]{0x99E8A33D, 0x553D382E}));
+        sw.setScaleX(1.25f);
+        sw.setScaleY(1.25f);
+        sw.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                boolean val = ((Switch) v).isChecked();
+                Prefs.setEco(MainActivity.this, val);
+                toast(val ? "✓ מצב חיסכון הופעל. יחול מהשיחה הבאה" : "✓ מצב חיסכון כובה. יחול מהשיחה הבאה");
+                render();
+            }
+        });
+        row.addView(sw);
+        card.addView(row);
+        card.addView(desc("בזמן שיחה: בלי ספירה לאחור חיה, בלי תמונות, והאפליקציה לא מחזיקה את המעבד ער. "
+                + "ההתראה לפני הניתוק והניתוק עצמו ממשיכים לעבוד, דרך שעון מעורר של המערכת."));
+        card.addView(desc("שים לב: גם בלי מצב חיסכון האפליקציה פועלת רק בזמן שיחה, כך שההבדל בסוללה קטן. "
+                + "במצב חיסכון ייתכן שיופיע סמל שעון מעורר בשורת המצב בזמן השיחה."));
+        root.addView(card, cardLp());
     }
 
     // ---- warning settings

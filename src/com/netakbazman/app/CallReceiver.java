@@ -46,6 +46,7 @@ public class CallReceiver extends BroadcastReceiver {
             } catch (Exception ignored) {}
         } else if (TelephonyManager.EXTRA_STATE_IDLE.equals(state)) {
             sp.edit().putBoolean("wasRinging", false).apply();
+            if (!CallTimerService.running) CallTimerService.clearLeftovers(c);
             if (CallTimerService.running) {
                 try {
                     c.startService(new Intent(c, CallTimerService.class).setAction(CallTimerService.ACTION_CALL_END));

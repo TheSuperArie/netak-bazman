@@ -118,7 +118,7 @@ public class MainActivity extends Activity {
         defaultCard();
         rulesCard();
         warnCard();
-        TextView f = text("עובד בלי אינטרנט · שום מידע לא יוצא מהמכשיר · גרסה 1.1", 13, MUTED, false);
+        TextView f = text("עובד בלי אינטרנט · שום מידע לא יוצא מהמכשיר · גרסה 1.2", 13, MUTED, false);
         f.setGravity(Gravity.CENTER);
         f.setPadding(0, dp(18), 0, 0);
         root.addView(f, new LinearLayout.LayoutParams(-1, -2));
@@ -154,17 +154,18 @@ public class MainActivity extends Activity {
         List<String> p = new ArrayList<String>();
         p.add(Manifest.permission.READ_PHONE_STATE);
         p.add(Manifest.permission.READ_CALL_LOG);
-        p.add(Manifest.permission.ANSWER_PHONE_CALLS);
         p.add(Manifest.permission.PROCESS_OUTGOING_CALLS);
         p.add(Manifest.permission.READ_CONTACTS);
+        // hanging up: Android 9+ uses ANSWER_PHONE_CALLS, Android 8 needs CALL_PHONE
+        p.add(Build.VERSION.SDK_INT >= 28 ? Manifest.permission.ANSWER_PHONE_CALLS : Manifest.permission.CALL_PHONE);
         if (Build.VERSION.SDK_INT >= 33) p.add("android.permission.POST_NOTIFICATIONS");
         return p.toArray(new String[0]);
     }
 
     private boolean hasPhonePerms() {
         String[] need = {Manifest.permission.READ_PHONE_STATE, Manifest.permission.READ_CALL_LOG,
-                Manifest.permission.ANSWER_PHONE_CALLS, Manifest.permission.PROCESS_OUTGOING_CALLS,
-                Manifest.permission.READ_CONTACTS};
+                Manifest.permission.PROCESS_OUTGOING_CALLS, Manifest.permission.READ_CONTACTS,
+                Build.VERSION.SDK_INT >= 28 ? Manifest.permission.ANSWER_PHONE_CALLS : Manifest.permission.CALL_PHONE};
         for (String s : need) if (checkSelfPermission(s) != PackageManager.PERMISSION_GRANTED) return false;
         return true;
     }
@@ -421,6 +422,7 @@ public class MainActivity extends Activity {
             row.setPadding(dp(12), dp(10), dp(12), dp(10));
             row.setBackground(ripple(round(FIELD, dp(14), LINE, dp(1))));
             row.setClickable(true);
+        row.setFocusable(true);
             row.addView(avatarView(avatarFor(name, k != null ? k.photoUri : null, dp(44)), 44));
             LinearLayout col = vcol();
             col.setPadding(dp(12), 0, dp(8), 0);
@@ -770,6 +772,7 @@ public class MainActivity extends Activity {
             TextView del = text("מחק את הקו", 16, DANGER, true);
             del.setGravity(Gravity.CENTER);
             del.setClickable(true);
+        del.setFocusable(true);
             del.setBackground(ripple(round(0, dp(25), 0, 0)));
             del.setOnClickListener(new View.OnClickListener() {
                 @Override public void onClick(View v) {
@@ -881,6 +884,7 @@ public class MainActivity extends Activity {
             chip.setGravity(Gravity.CENTER);
             chip.setBackground(ripple(sel ? round(ACCENT, dp(22), 0, 0) : round(FIELD, dp(22), LINE, dp(1))));
             chip.setClickable(true);
+        chip.setFocusable(true);
             chip.setOnClickListener(new View.OnClickListener() {
                 @Override public void onClick(View view) { cb.on(v); }
             });
@@ -905,6 +909,7 @@ public class MainActivity extends Activity {
         g.setStroke(dp(2), ACCENT);
         t.setBackground(ripple(g));
         t.setClickable(true);
+        t.setFocusable(true);
         t.setContentDescription(a11y);
         return t;
     }
@@ -916,6 +921,7 @@ public class MainActivity extends Activity {
         t.setMinHeight(dp(44));
         t.setBackground(ripple(primary ? round(ACCENT, dp(25), 0, 0) : round(0, dp(25), ACCENT, dp(2))));
         t.setClickable(true);
+        t.setFocusable(true);
         return t;
     }
 

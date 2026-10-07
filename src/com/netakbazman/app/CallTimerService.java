@@ -159,11 +159,15 @@ public class CallTimerService extends Service {
     private void hangUp() {
         boolean ok = false;
         try {
-            if (checkSelfPermission(Manifest.permission.ANSWER_PHONE_CALLS) == PackageManager.PERMISSION_GRANTED) {
-                TelecomManager tm = (TelecomManager) getSystemService(Context.TELECOM_SERVICE);
-                ok = tm != null && tm.endCall();
+            if (android.os.Build.VERSION.SDK_INT >= 28) {
+                if (checkSelfPermission(Manifest.permission.ANSWER_PHONE_CALLS) == PackageManager.PERMISSION_GRANTED) {
+                    TelecomManager tm = (TelecomManager) getSystemService(Context.TELECOM_SERVICE);
+                    ok = tm != null && tm.endCall();
+                }
+            } else {
+                ok = legacyEndCall();
             }
-        } catch (Exception ignored) {}
+        } catch (Throwable ignored) {}
         long mins = (SystemClock.elapsedRealtime() - startElapsed) / 60000L;
         String time = new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date());
         Notification.Builder b = new Notification.Builder(this, CH_DONE)
@@ -181,6 +185,22 @@ public class CallTimerService extends Service {
         }
         nm(this).notify(ID_DONE, b.build());
         finish();
+    }
+
+    /** Android 8.x (e.g. older keypad phones): the classic internal telephony call. */
+    private boolean legacyEndCall() {
+        try {
+            android.telephony.TelephonyManager tm =
+                    (android.telephony.TelephonyManager) getSystemService(Context.TELEPHONY_SERVICE);
+            java.lang.reflect.Method get = tm.getClass().getDeclaredMethod("getITelephony");
+            get.setAccessible(true);
+            Object it = get.invoke(tm);
+            java.lang.reflect.Method end = it.getClass().getMethod("endCall");
+            Object r = end.invoke(it);
+            return !(r instanceof Boolean) || (Boolean) r;
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     private void finish() {

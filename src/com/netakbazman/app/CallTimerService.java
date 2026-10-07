@@ -9,6 +9,7 @@ import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
 import android.graphics.drawable.Icon;
 import android.os.Handler;
 import android.os.IBinder;
@@ -47,6 +48,7 @@ public class CallTimerService extends Service {
     private int plannedMinutes;
     private String number;
     private String label;
+    private Bitmap photo;
 
     private final Runnable tick = new Runnable() {
         @Override public void run() { onTick(); }
@@ -111,9 +113,17 @@ public class CallTimerService extends Service {
         Prefs.Rule r = Prefs.match(this, number);
         int m = r != null ? r.minutes : Prefs.defaultMinutes(this);
         plannedMinutes = m;
+        ContactUtil.Contact k = ContactUtil.lookup(this, number);
         if (r != null && r.name != null && !r.name.trim().isEmpty()) label = r.name.trim();
+        else if (k != null && !k.name.isEmpty()) label = k.name;
         else if (number != null && !number.isEmpty()) label = number;
         else label = "שיחה";
+        photo = null;
+        try {
+            int size = (int) (64 * getResources().getDisplayMetrics().density);
+            if (k != null) photo = ContactUtil.avatar(this, k.photoUri, label, size);
+            else if (r != null) photo = ContactUtil.letter(label, size);
+        } catch (Exception ignored) {}
         deadline = m <= 0 ? -1 : startElapsed + m * 60000L;
         // a very short limit (shorter than the warning time) gets no warning
         warned = m > 0 && m * 60000L <= Prefs.warnMinutes(this) * 60000L;
@@ -127,7 +137,7 @@ public class CallTimerService extends Service {
         if (rem <= 0) { hangUp(); return; }
         if (!warned && rem <= warnMs) {
             warned = true;
-            postWarning(this, label, rem);
+            postWarning(this, label, rem, false, photo);
         }
         long next = Math.min(15000L, rem);
         if (!warned && rem - warnMs > 0) next = Math.min(next, rem - warnMs);
@@ -161,9 +171,10 @@ public class CallTimerService extends Service {
                 .setColor(COLOR)
                 .setAutoCancel(true)
                 .setContentIntent(openApp(this));
+        if (photo != null) b.setLargeIcon(photo);
         if (ok) {
-            b.setContentTitle("השיחה נותקה ב-" + time)
-             .setContentText(label + " · אחרי " + Prefs.fmt((int) Math.max(1, mins)));
+            b.setContentTitle("השיחה עם " + label + " נותקה ב-" + time)
+             .setContentText("אחרי " + Prefs.fmt((int) Math.max(1, mins)) + " · ניתוק אוטומטי");
         } else {
             b.setContentTitle("לא הצלחתי לנתק את השיחה")
              .setContentText("פתח את האפליקציה ובדוק שכל ההרשאות אושרו");
@@ -216,6 +227,7 @@ public class CallTimerService extends Service {
                 .setCategory(Notification.CATEGORY_SERVICE)
                 .setContentIntent(openApp(this))
                 .setContentTitle("טיימר שיחה · " + label);
+        if (photo != null) b.setLargeIcon(photo);
         if (deadline >= 0) {
             long rem = deadline - SystemClock.elapsedRealtime();
             long endWall = System.currentTimeMillis() + rem;
@@ -237,14 +249,12 @@ public class CallTimerService extends Service {
         if (active) nm(this).notify(ID_ONGOING, buildOngoing());
     }
 
-    static void postWarning(Context c, String label, long remMs) {
-        postWarning(c, label, remMs, false);
-    }
-
-    static void postWarning(Context c, String label, long remMs, boolean test) {
+    static void postWarning(Context c, String label, long remMs, boolean test, Bitmap photo) {
         createChannels(c);
         int mins = (int) Math.max(1, Math.round(remMs / 60000.0));
-        Notification n = new Notification.Builder(c, CH_WARN)
+        Notification.Builder nb = new Notification.Builder(c, CH_WARN);
+        if (photo != null) nb.setLargeIcon(photo);
+        Notification n = nb
                 .setSmallIcon(R.drawable.ic_notif)
                 .setColor(COLOR)
                 .setCategory(Notification.CATEGORY_REMINDER)

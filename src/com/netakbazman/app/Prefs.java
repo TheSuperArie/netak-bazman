@@ -28,6 +28,9 @@ public final class Prefs {
     public static void setEnabled(Context c, boolean v) { sp(c).edit().putBoolean("enabled", v).apply(); }
 
     /** Energy saving: no live countdown, no wake lock, no photos; system alarms drive the timer. */
+    public static boolean watch(Context c) { return sp(c).getBoolean("watch", true); }
+    public static void setWatch(Context c, boolean v) { sp(c).edit().putBoolean("watch", v).apply(); }
+
     public static boolean eco(Context c) { return sp(c).getBoolean("eco", false); }
     public static void setEco(Context c, boolean v) { sp(c).edit().putBoolean("eco", v).apply(); }
 

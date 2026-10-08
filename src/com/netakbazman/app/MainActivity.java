@@ -118,7 +118,9 @@ public class MainActivity extends Activity {
         defaultCard();
         rulesCard();
         warnCard();
+        watchCard();
         ecoCard();
+        WatchService.sync(this);
         TextView f = text("עובד בלי אינטרנט · שום מידע לא יוצא מהמכשיר · גרסה 1.4", 13, MUTED, false);
         f.setGravity(Gravity.CENTER);
         f.setPadding(0, dp(18), 0, 0);
@@ -233,7 +235,7 @@ public class MainActivity extends Activity {
             }
         }));
         if (xi) {
-            card.addView(step(4, auto, "הפעלה אוטומטית (שיאומי)", "הדלק את המתג ליד \"נתק בזמן\"", "פתח", new View.OnClickListener() {
+            card.addView(step(4, auto, "הפעלה אוטומטית", "כדי שהאפליקציה תעבוד גם אחרי כיבוי והדלקה של הטלפון", "פתח", new View.OnClickListener() {
                 @Override public void onClick(View v) {
                     final Intent i = new Intent().setComponent(new ComponentName("com.miui.securitycenter",
                             "com.miui.permcenter.autostart.AutoStartManagementActivity"));
@@ -806,6 +808,38 @@ public class MainActivity extends Activity {
         sh.dialog.show();
     }
 
+    // ---- always ready in the background (also after restarting the phone)
+
+    private void watchCard() {
+        LinearLayout card = card();
+        LinearLayout row = hrow();
+        LinearLayout col = vcol();
+        final boolean on = Prefs.watch(this);
+        col.addView(title("פועל גם אחרי הפעלה מחדש"));
+        col.addView(text(on ? "פעיל" : "כבוי", 14, on ? OK : DANGER, false));
+        row.addView(col, new LinearLayout.LayoutParams(0, -2, 1));
+        Switch sw = new Switch(this);
+        sw.setChecked(on);
+        sw.setContentDescription("פועל גם אחרי הפעלה מחדש");
+        int[][] st = {{android.R.attr.state_checked}, {}};
+        sw.setThumbTintList(new ColorStateList(st, new int[]{ACCENT, 0xFF8A8172}));
+        sw.setTrackTintList(new ColorStateList(st, new int[]{0x99E8A33D, 0x553D382E}));
+        sw.setScaleX(1.25f);
+        sw.setScaleY(1.25f);
+        sw.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                Prefs.setWatch(MainActivity.this, ((Switch) v).isChecked());
+                render();
+            }
+        });
+        row.addView(sw);
+        card.addView(row);
+        card.addView(desc("כשהטלפון נדלק, האפליקציה מתחילה לפעול לבד ומחכה לשיחה הבאה, בלי שתצטרך לפתוח אותה. "
+                + "תופיע התראה שקטה \"נתק בזמן פועל ברקע\". היא כמעט לא צורכת סוללה."));
+        if (!on) card.addView(desc("כשזה כבוי, בחלק מהטלפונים האפליקציה לא תעבוד אחרי הפעלה מחדש עד שתפתח אותה."));
+        root.addView(card, cardLp());
+    }
+
     // ---- energy saving
 
     private void ecoCard() {
@@ -837,8 +871,8 @@ public class MainActivity extends Activity {
         card.addView(row);
         card.addView(desc("בזמן שיחה: בלי ספירה לאחור חיה, בלי תמונות, והאפליקציה לא מחזיקה את המעבד ער. "
                 + "ההתראה לפני הניתוק והניתוק עצמו ממשיכים לעבוד, דרך שעון מעורר של המערכת."));
-        card.addView(desc("שים לב: גם בלי מצב חיסכון האפליקציה פועלת רק בזמן שיחה, כך שההבדל בסוללה קטן. "
-                + "במצב חיסכון ייתכן שיופיע סמל שעון מעורר בשורת המצב בזמן השיחה."));
+        card.addView(desc("שים לב: גם בלי מצב חיסכון ההבדל בסוללה קטן, כי הטיימר פועל רק בזמן שיחה. "
+                + "בזמן שיחה עם טיימר ייתכן שיופיע סמל שעון מעורר בשורת המצב."));
         root.addView(card, cardLp());
     }
 

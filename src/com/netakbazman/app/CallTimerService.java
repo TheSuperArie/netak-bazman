@@ -86,15 +86,20 @@ public class CallTimerService extends Service {
             else cancelWarn(this);
             if (!active) stopSelf();
         } else if (ACTION_ALARM.equals(a)) {
-            if (active) onTick();
-            else restore();
+            if (active) {
+                // the alarm receiver may already have shown the warning
+                if (Prefs.sp(this).getBoolean("t_warned", false)) warned = true;
+                onTick();
+            } else restore();
         } else if (ACTION_KEEP.equals(a)) {
             cancelWarn(this);
             finish();
         } else if (!active) {
-            stopSelf();
+            // restarted by the system after being killed (sticky): continue a running timer
+            if (intent == null && Prefs.sp(this).getBoolean("t_active", false)) restore();
+            else stopSelf();
         }
-        return START_NOT_STICKY;
+        return active ? START_STICKY : START_NOT_STICKY;
     }
 
     private void handleStart(String num) {
@@ -153,6 +158,7 @@ public class CallTimerService extends Service {
         long rem = deadline - now;
         long warnMs = Prefs.warnMinutes(this) * 60000L;
         if (rem <= 0) { hangUp(); return; }
+        if (!warned && Prefs.sp(this).getBoolean("t_warned", false)) warned = true; // receiver already warned
         if (!warned && rem <= warnMs) {
             warned = true;
             saveState();
@@ -179,41 +185,69 @@ public class CallTimerService extends Service {
     }
 
     private void hangUp() {
+        boolean ok = endCallNow(this);
+        postDone(this, ok, label, startElapsed, photo);
+        finish();
+    }
+
+    /** Last successful hang-up, so the service and the alarm receiver never hang up twice. */
+    private static volatile long hungUpAt = 0;
+
+    static int callState(Context c) {
+        try {
+            android.telephony.TelephonyManager tm =
+                    (android.telephony.TelephonyManager) c.getSystemService(Context.TELEPHONY_SERVICE);
+            return tm != null ? tm.getCallState() : -1;
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    /** Hangs up the current call. Works from the service or straight from the alarm receiver. */
+    static synchronized boolean endCallNow(Context c) {
+        if (SystemClock.elapsedRealtime() - hungUpAt < 8000L && hungUpAt != 0) return true;
+        if (callState(c) == android.telephony.TelephonyManager.CALL_STATE_IDLE) return true; // already over
         boolean ok = false;
         try {
             if (android.os.Build.VERSION.SDK_INT >= 28) {
-                if (checkSelfPermission(Manifest.permission.ANSWER_PHONE_CALLS) == PackageManager.PERMISSION_GRANTED) {
-                    TelecomManager tm = (TelecomManager) getSystemService(Context.TELECOM_SERVICE);
+                if (c.checkSelfPermission(Manifest.permission.ANSWER_PHONE_CALLS) == PackageManager.PERMISSION_GRANTED) {
+                    TelecomManager tm = (TelecomManager) c.getSystemService(Context.TELECOM_SERVICE);
                     ok = tm != null && tm.endCall();
                 }
             } else {
-                ok = legacyEndCall();
+                ok = legacyEndCall(c);
             }
         } catch (Throwable ignored) {}
+        if (ok) hungUpAt = SystemClock.elapsedRealtime();
+        return ok;
+    }
+
+    /** Summary notification after an automatic hang-up. */
+    static void postDone(Context c, boolean ok, String label, long startElapsed, Bitmap photo) {
+        createChannels(c);
         long mins = (SystemClock.elapsedRealtime() - startElapsed) / 60000L;
         String time = new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date());
-        Notification.Builder b = new Notification.Builder(this, CH_DONE)
+        Notification.Builder b = new Notification.Builder(c, CH_DONE)
                 .setSmallIcon(R.drawable.ic_notif)
                 .setColor(COLOR)
                 .setAutoCancel(true)
-                .setContentIntent(openApp(this));
+                .setContentIntent(openApp(c));
         if (photo != null) b.setLargeIcon(photo);
         if (ok) {
-            b.setContentTitle("השיחה עם " + label + " נותקה ב-" + time)
+            b.setContentTitle("השיחה עם " + (label != null ? label : "שיחה") + " נותקה ב-" + time)
              .setContentText("אחרי " + Prefs.fmt((int) Math.max(1, mins)) + " · ניתוק אוטומטי");
         } else {
             b.setContentTitle("לא הצלחתי לנתק את השיחה")
              .setContentText("פתח את האפליקציה ובדוק שכל ההרשאות אושרו");
         }
-        nm(this).notify(ID_DONE, b.build());
-        finish();
+        nm(c).notify(ID_DONE, b.build());
     }
 
     /** Android 8.x (e.g. older keypad phones): the classic internal telephony call. */
-    private boolean legacyEndCall() {
+    private static boolean legacyEndCall(Context c) {
         try {
             android.telephony.TelephonyManager tm =
-                    (android.telephony.TelephonyManager) getSystemService(Context.TELEPHONY_SERVICE);
+                    (android.telephony.TelephonyManager) c.getSystemService(Context.TELEPHONY_SERVICE);
             java.lang.reflect.Method get = tm.getClass().getDeclaredMethod("getITelephony");
             get.setAccessible(true);
             Object it = get.invoke(tm);
@@ -271,13 +305,11 @@ public class CallTimerService extends Service {
         long now = SystemClock.elapsedRealtime();
         long warnMs = Prefs.warnMinutes(this) * 60000L;
         try {
-            if (eco) {
-                // alarm-clock alarms are never delayed by power saving
-                long wall = System.currentTimeMillis() + (deadline - now);
-                am.setAlarmClock(new AlarmManager.AlarmClockInfo(wall, openApp(this)), alarmPI(1));
-            } else {
-                am.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, deadline, alarmPI(1));
-            }
+            // alarm-clock alarms fire on time even with the screen off, in deep sleep (Doze)
+            // and in power saving, and they wake the phone up. The alarm receiver hangs up by itself,
+            // so the disconnect does not depend on this service still being alive.
+            long wall = System.currentTimeMillis() + (deadline - now);
+            am.setAlarmClock(new AlarmManager.AlarmClockInfo(wall, openApp(this)), alarmPI(1));
             if (!warned && deadline - warnMs > now) {
                 am.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, deadline - warnMs, alarmPI(2));
             }
@@ -311,12 +343,7 @@ public class CallTimerService extends Service {
     /** The app was closed during a call and a system alarm woke it: continue where it stopped. */
     private void restore() {
         android.content.SharedPreferences sp = Prefs.sp(this);
-        boolean inCall = false;
-        try {
-            android.telephony.TelephonyManager tm =
-                    (android.telephony.TelephonyManager) getSystemService(Context.TELEPHONY_SERVICE);
-            inCall = tm != null && tm.getCallState() == android.telephony.TelephonyManager.CALL_STATE_OFFHOOK;
-        } catch (Exception ignored) {}
+        boolean inCall = callState(this) == android.telephony.TelephonyManager.CALL_STATE_OFFHOOK;
         if (!sp.getBoolean("t_active", false) || !inCall) {
             label = "שיחה";
             deadline = -1;

@@ -119,7 +119,7 @@ public class MainActivity extends Activity {
         rulesCard();
         warnCard();
         ecoCard();
-        TextView f = text("עובד בלי אינטרנט · שום מידע לא יוצא מהמכשיר · גרסה 1.3", 13, MUTED, false);
+        TextView f = text("עובד בלי אינטרנט · שום מידע לא יוצא מהמכשיר · גרסה 1.4", 13, MUTED, false);
         f.setGravity(Gravity.CENTER);
         f.setPadding(0, dp(18), 0, 0);
         root.addView(f, new LinearLayout.LayoutParams(-1, -2));
@@ -183,7 +183,7 @@ public class MainActivity extends Activity {
 
     private boolean isXiaomi() {
         String m = (Build.MANUFACTURER + " " + Build.BRAND).toLowerCase();
-        return m.contains("xiaomi") || m.contains("redmi") || m.contains("poco");
+        return m.contains("xiaomi") || m.contains("redmi") || m.contains("poco") || m.contains("qin");
     }
 
     private boolean flag(String k) { return Prefs.sp(this).getBoolean(k, false); }
@@ -194,7 +194,8 @@ public class MainActivity extends Activity {
         boolean xi = isXiaomi();
         boolean auto = !xi || flag("autostartVisited");
         boolean miBat = !xi || flag("miBatteryVisited");
-        boolean all = p && n && bat && auto && miBat;
+        boolean lock = !xi || flag("recentsLockSeen");
+        boolean all = p && n && bat && auto && miBat && lock;
 
         LinearLayout card = card();
         if (all) {
@@ -248,16 +249,30 @@ public class MainActivity extends Activity {
                     });
                 }
             }));
+            card.addView(step(6, lock, "נעילה ברשימת האחרונות", "כדי שהטלפון לא יסגור את האפליקציה כשהמסך כבוי", "איך?", new View.OnClickListener() {
+                @Override public void onClick(View v) {
+                    guide("נעילה ברשימת האחרונות", "כך הטלפון לא ינקה את האפליקציה כשהמסך נכבה:\n\n"
+                            + "1. פתח את רשימת האפליקציות האחרונות (הכפתור המרובע, או החלקה מלמטה והחזקה)\n"
+                            + "2. מצא את \"נתק בזמן\"\n"
+                            + "3. החלק את הכרטיס שלה למטה, או לחץ עליו לחיצה ארוכה, ובחר במנעול 🔒\n\n"
+                            + "אם אין אצלך מנעול, אפשר לדלג.\n"
+                            + "ואם יש בהגדרות האבטחה \"ניקוי זיכרון בנעילת מסך\", כדאי לכבות אותו.", "הבנתי", new Runnable() {
+                        @Override public void run() { setFlag("recentsLockSeen"); render(); }
+                    });
+                }
+            }));
         }
         root.addView(card, cardLp());
     }
 
     /** Explains what to do in a system settings screen before opening it. */
-    private void guide(String title, String body, final Runnable open) {
+    private void guide(String title, String body, final Runnable open) { guide(title, body, "פתח", open); }
+
+    private void guide(String title, String body, String btn, final Runnable open) {
         AlertDialog d = new AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
                 .setTitle(title)
                 .setMessage(body)
-                .setPositiveButton("פתח", new DialogInterface.OnClickListener() {
+                .setPositiveButton(btn, new DialogInterface.OnClickListener() {
                     @Override public void onClick(DialogInterface di, int w) { open.run(); }
                 })
                 .setNegativeButton("ביטול", null)
